@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Flowing Sphere</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: radial-gradient(circle at center, #f8f9ff 0%, #ffffff 100%);
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background: transparent;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="sphereCanvas" width="600" height="600"></canvas>
+    <script>
+    const canvas = document.getElementById('sphereCanvas');
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const radius = 180;
+    let time = 0;
+    let specialWavePhase = 0;
+
+    function draw3DSphere() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // 3D 구체 그리기
+        const imageData = ctx.createImageData(radius * 2, radius * 2);
+        const data = imageData.data;
+        
+        for (let y = -radius; y < radius; y++) {
+            for (let x = -radius; x < radius; x++) {
+                const distance = Math.sqrt(x * x + y * y);
+                if (distance > radius) continue;
+                
+                // 3D 구체의 z 좌표 계산
+                const z = Math.sqrt(radius * radius - x * x - y * y);
+                
+                // 구체 표면의 각도 계산
+                const theta = Math.atan2(y, x);
+                const phi = Math.acos(z / radius);
+                
+                // 물결 패턴 (3D 구체 표면을 따라 흐름)
+                const wave1 = Math.sin(theta * 3 - time * 0.02) * 0.4;
+                const wave2 = Math.cos(phi * 4 + time * 0.015) * 0.3;
+                const wave3 = Math.sin(theta + phi + time * 0.01) * 0.2;
+                const combinedWave = wave1 + wave2 + wave3;
+                
+                // 기본 색상 (파란색-보라색 그라데이션)
+                let r = 80 + Math.floor(60 * (0.5 + 0.5 * Math.sin(theta + time * 0.01)));
+                let g = 60 + Math.floor(40 * (0.5 + 0.5 * Math.cos(phi + time * 0.008)));
+                let b = 180 + Math.floor(75 * (0.5 + 0.5 * Math.sin(combinedWave)));
+                
+                // 빨간색/분홍색 스플래시 효과
+                const specialIntensity = Math.sin(specialWavePhase) * 0.5 + 0.5;
+                if (Math.random() < 0.003 * specialIntensity && distance > radius * 0.3) {
+                    const splashIntensity = Math.sin(combinedWave * 2) * 0.5 + 0.5;
+                    if (splashIntensity > 0.7) {
+                        r = Math.min(255, r + 120 * splashIntensity);
+                        g = Math.min(255, g + 40 * splashIntensity);
+                        b = Math.min(255, b + 60 * splashIntensity);
+                    }
+                }
+                
+                // 3D 조명 효과
+                const lightX = Math.cos(time * 0.005);
+                const lightY = Math.sin(time * 0.005);
+                const lightZ = 0.5;
+                const normalX = x / radius;
+                const normalY = y / radius;
+                const normalZ = z / radius;
+                
+                const dotProduct = normalX * lightX + normalY * lightY + normalZ * lightZ;
+                const lighting = Math.max(0.3, dotProduct);
+                
+                r = Math.floor(r * lighting);
+                g = Math.floor(g * lighting);
+                b = Math.floor(b * lighting);
+                
+                // 픽셀 위치 계산
+                const pixelX = Math.floor(x + radius);
+                const pixelY = Math.floor(y + radius);
+                const pixelIndex = (pixelY * radius * 2 + pixelX) * 4;
+                
+                data[pixelIndex] = r;
+                data[pixelIndex + 1] = g;
+                data[pixelIndex + 2] = b;
+                data[pixelIndex + 3] = 255;
+            }
+        }
+        
+        // 구체 그리기
+        ctx.putImageData(imageData, centerX - radius, centerY - radius);
+        
+        // 우주 빛 아우라 효과 (여러 레이어)
+        drawAura();
+    }
+    
+    function drawAura() {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        
+        // 첫 번째 아우라 레이어 (가장 밝고 가까운)
+        const aura1 = ctx.createRadialGradient(0, 0, radius, 0, 0, radius + 40);
+        aura1.addColorStop(0, 'rgba(120, 100, 255, 0.15)');
+        aura1.addColorStop(0.3, 'rgba(80, 150, 255, 0.1)');
+        aura1.addColorStop(0.7, 'rgba(60, 120, 255, 0.05)');
+        aura1.addColorStop(1, 'rgba(40, 80, 255, 0)');
+        
+        ctx.fillStyle = aura1;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 40, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 두 번째 아우라 레이어 (중간)
+        const aura2 = ctx.createRadialGradient(0, 0, radius + 20, 0, 0, radius + 80);
+        aura2.addColorStop(0, 'rgba(100, 80, 255, 0.08)');
+        aura2.addColorStop(0.4, 'rgba(70, 130, 255, 0.04)');
+        aura2.addColorStop(0.8, 'rgba(50, 100, 255, 0.02)');
+        aura2.addColorStop(1, 'rgba(30, 70, 255, 0)');
+        
+        ctx.fillStyle = aura2;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 80, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 세 번째 아우라 레이어 (가장 넓고 부드러운)
+        const aura3 = ctx.createRadialGradient(0, 0, radius + 40, 0, 0, radius + 120);
+        aura3.addColorStop(0, 'rgba(80, 60, 255, 0.04)');
+        aura3.addColorStop(0.5, 'rgba(60, 100, 255, 0.02)');
+        aura3.addColorStop(0.9, 'rgba(40, 80, 255, 0.01)');
+        aura3.addColorStop(1, 'rgba(20, 60, 255, 0)');
+        
+        ctx.fillStyle = aura3;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 120, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // 빛의 파티클 효과
+        drawLightParticles();
+        
+        ctx.restore();
+    }
+    
+    function drawLightParticles() {
+        const particleCount = 15;
+        for (let i = 0; i < particleCount; i++) {
+            const angle = (time * 0.001 + i * Math.PI * 2 / particleCount) % (Math.PI * 2);
+            const distance = radius + 30 + Math.sin(time * 0.002 + i) * 20;
+            const x = Math.cos(angle) * distance;
+            const y = Math.sin(angle) * distance;
+            
+            const size = 2 + Math.sin(time * 0.003 + i) * 1;
+            const alpha = 0.3 + Math.sin(time * 0.004 + i) * 0.2;
+            
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = `hsl(${220 + Math.sin(time * 0.001 + i) * 30}, 70%, 60%)`;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+    
+    function animate() {
+        time += 1;
+        specialWavePhase += 0.02;
+        draw3DSphere();
+        requestAnimationFrame(animate);
+    }
+    
+    // 마우스 인터랙션
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left - centerX;
+        const mouseY = e.clientY - rect.top - centerY;
+        const distance = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
+        
+        if (distance < radius + 50) {
+            canvas.style.cursor = 'pointer';
+        } else {
+            canvas.style.cursor = 'default';
+        }
+    });
+    
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left - centerX;
+        const mouseY = e.clientY - rect.top - centerY;
+        const distance = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
+        
+        if (distance < radius + 50) {
+            // 클릭 시 색상 변화 효과
+            specialWavePhase += Math.PI;
+        }
+    });
+    
+    animate();
+    </script>
+</body>
+</html>
+
