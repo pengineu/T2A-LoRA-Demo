@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Flowing Sphere</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            /* 더 진한 다층 그라데이션 백그라운드 + 느린 이동 애니메이션 */
+            background: radial-gradient(circle at 28% 18%, rgba(170,205,255,0.84), rgba(245,200,255,0.40) 36%, rgba(255,255,255,0.0) 72%),
+                        linear-gradient(135deg, #dff4ff 0%, #e6dcff 45%, #ffffff 100%);
+            background-size: 180% 180%;
+            overflow: hidden;
+            animation: bgShift 11s linear infinite;
+        }
+        canvas { display: block; background: transparent; }
+        @keyframes bgShift {
+            0% { background-position: 0% 0%; }
+            50% { background-position: 100% 100%; }
+            100% { background-position: 0% 0%; }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="sphereCanvas" width="600" height="600"></canvas>
+    <script>
+    const canvas = document.getElementById('sphereCanvas');
+    const ctx = canvas.getContext('2d');
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const radius = 180;
+    let time = 0;
+    let specialWavePhase = 0;
+    // 리플 제거. 클릭으로 인한 강한 요동(wobble)만 사용
+    let clickWobble = {
+        active: false,
+        x: 0, y: 0,
+        startMs: 0,
+        durationMs: 1000,
+        amplitude: 10.5,   // 매우 큰 진폭으로 형태 파괴
+        frequency: 6,      // 느린 큰 요동 위주
+        decay: 1.8,
+        peakAt: 0.28
+    };
+
+    function hslToRgb(h, s, l) {
+        s /= 100; l /= 100;
+        const k = n => (n + h / 30) % 12;
+        const a = s * Math.min(l, 1 - l);
+        const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+        return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
+    }
+
+    function draw3DSphere() {
+        // 클릭으로 발생한 강한 요동으로 구 형태를 완전히 일그러뜨려 표시
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const imageData = ctx.createImageData(radius * 2, radius * 2);
+        const data = imageData.data;
+        const nowMs = Date.now();
+        for (let y = -radius; y < radius; y++) {
+            for (let x = -radius; x < radius; x++) {
+                const distance = Math.sqrt(x * x + y * y);
+                if (distance > radius) continue;
+                // base sphere z
+                const z0 = Math.sqrt(Math.max(0, radius * radius - x * x - y * y));
+                const theta = Math.atan2(y, x);
+                const phi = Math.acos(Math.min(1, Math.max(-1, z0 / radius)));
+
+                // base color
+                const waveBase = Math.sin(theta * 2 + time * 0.02);
+                let combinedWave = waveBase * 0.5;
+
+                // 클릭 웨이블에 의한 강한 변위
+                let wobble = 0;
+                // renderRadius controls a smooth shrink of the visible circle during the wobble
+                let renderRadius = radius;
+                if (clickWobble.active) {
+                    const t = (nowMs - clickWobble.startMs) / 1000.0;
+                    const td = clickWobble.durationMs / 1000.0;
+                    if (t <= td) {
+                        const peak = clickWobble.peakAt;
+                        let env = (t / td < peak) ? (t / td) / peak : Math.max(0, (1 - (t / td - peak) / (1 - peak)));
+                        env *= Math.exp(-clickWobble.decay * t);
+                        const osc = Math.sin(2 * Math.PI * clickWobble.frequency * t) + 0.6 * Math.sin(2 * Math.PI * (clickWobble.frequency/2) * t);
+                        const w = clickWobble.amplitude * env * osc;
+                        const dx = x - clickWobble.x;
+                        const dy = y - clickWobble.y;
+                        const d = Math.sqrt(dx*dx + dy*dy);
+                        const fall = Math.max(0, 1 - Math.pow(d / (radius * 1.15), 1.4));
+                        wobble = w * fall;
+                        // smoothly shrink the visible radius (but we'll use soft alpha to avoid hard blink)
+                        renderRadius = radius * (1 - 0.6 * env);
+                    } else {
+                        clickWobble.active = false;
+                    }
+                }
+
+                // 대폭적인 지오메트리 변형
+                const dispScale = 96.0; // 아주 크게 변형시켜 형태 소실
+                let displacement = -wobble * dispScale;
+                const maxInward = z0 * 0.9; // 크게 들어가게 허용
+                const maxOutward = z0 * 0.4;
+                displacement = Math.max(-maxInward, Math.min(maxOutward, displacement));
+                const z = Math.max(0.0, z0 + displacement);
+
+                // 색상 계산에 변형 반영
+                const hue = 230 + Math.sin(theta * 2 + time * 0.025) * 26 + Math.sin(phi * 3 - time * 0.03) * 14;
+                const saturation = 72 + (Math.sin(combinedWave * 1.3 + time * 0.025) * 18);
+                const lightnessBase = 38 + (z / radius) * 18 + Math.sin(combinedWave * 2 - time * 0.02) * 6;
+                let [r, g, b] = hslToRgb(hue, saturation, lightnessBase);
+
+                // 주변 기울기 기반 법선 근사로 극단적 하이라이트/쉐도우 연출
+                const sx = 2, sy = 2;
+                const zx1 = Math.sqrt(Math.max(0, radius*radius - (x+sx)*(x+sx) - y*y));
+                const zx2 = Math.sqrt(Math.max(0, radius*radius - (x-sx)*(x-sx) - y*y));
+                const zy1 = Math.sqrt(Math.max(0, radius*radius - x*x - (y+sy)*(y+sy)));
+                const zy2 = Math.sqrt(Math.max(0, radius*radius - x*x - (y-sy)*(y-sy)));
+                const dzdx = (zx1 - zx2) / (2*sx);
+                const dzdy = (zy1 - zy2) / (2*sy);
+                const nx = -dzdx - (displacement*0.02);
+                const ny = -dzdy - (displacement*0.02);
+                const nz = 1.0;
+                const nLen = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1.0;
+                const normalX = nx / nLen;
+                const normalY = ny / nLen;
+                const normalZ = nz / nLen;
+                const lightX = Math.cos(time * 0.007);
+                const lightY = Math.sin(time * 0.007);
+                const lightZ = 0.6;
+                const dotProduct = normalX * lightX + normalY * lightY + normalZ * lightZ;
+                const lighting = Math.max(0.06, 0.5 + 0.9 * dotProduct);
+                r = Math.min(255, Math.floor(r * lighting + 8));
+                g = Math.min(255, Math.floor(g * lighting + 6));
+                b = Math.min(255, Math.floor(b * lighting + 10));
+
+                // soft-edge rendering: smoothly fade pixels beyond renderRadius to avoid blinking
+                const soft = 18; // px fade length
+                // if renderRadius was not changed, this is radius
+                if (distance > renderRadius + soft) continue; // fully outside
+                let edgeAlpha = 1.0;
+                if (distance > renderRadius) {
+                    edgeAlpha = 1 - (distance - renderRadius) / soft;
+                    edgeAlpha = Math.max(0, Math.min(1, edgeAlpha));
+                }
+
+                // 원 경계는 항상 radius 기준으로 렌더(깜빡임 방지)
+                if (distance > radius) continue;
+
+                const pixelX = Math.floor(x + radius);
+                const pixelY = Math.floor(y + radius);
+                const pixelIndex = (pixelY * radius * 2 + pixelX) * 4;
+                data[pixelIndex] = r;
+                data[pixelIndex + 1] = g;
+                data[pixelIndex + 2] = b;
+                // apply edgeAlpha so the shrinking appears smooth (no abrupt blink)
+                data[pixelIndex + 3] = Math.round(255 * edgeAlpha);
+            }
+        }
+        ctx.putImageData(imageData, centerX - radius, centerY - radius);
+        drawAura();
+    }
+
+    function drawAura() {
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        const pulse = (Math.sin(time * 0.02) * 0.5 + 0.5);
+
+        const aura1 = ctx.createRadialGradient(0, 0, radius * 0.2, 0, 0, radius + 50);
+        aura1.addColorStop(0, `rgba(150, 200, 255, ${0.34 + pulse * 0.12})`);
+        aura1.addColorStop(0.35, 'rgba(130, 170, 255, 0.20)');
+        aura1.addColorStop(0.7, 'rgba(110, 140, 255, 0.12)');
+        aura1.addColorStop(1, 'rgba(90, 120, 255, 0)');
+        ctx.fillStyle = aura1;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 50, 0, Math.PI * 2);
+        ctx.fill();
+
+        const aura2 = ctx.createRadialGradient(0, 0, radius * 0.6, 0, 0, radius + 95);
+        aura2.addColorStop(0, 'rgba(120, 160, 255, 0.18)');
+        aura2.addColorStop(0.4, 'rgba(100, 140, 255, 0.10)');
+        aura2.addColorStop(0.8, 'rgba(80, 110, 255, 0.06)');
+        aura2.addColorStop(1, 'rgba(60, 90, 255, 0)');
+        ctx.fillStyle = aura2;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 95, 0, Math.PI * 2);
+        ctx.fill();
+
+        const aura3 = ctx.createRadialGradient(0, 0, radius * 0.9, 0, 0, radius + 140);
+        aura3.addColorStop(0, 'rgba(110, 150, 255, 0.10)');
+        aura3.addColorStop(0.5, 'rgba(90, 120, 255, 0.06)');
+        aura3.addColorStop(0.85, `rgba(255, 120, 200, ${0.03 + pulse * 0.015})`);
+        aura3.addColorStop(1, 'rgba(70, 90, 255, 0)');
+        ctx.fillStyle = aura3;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 140, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = 'rgba(180,200,255,0.28)';
+        ctx.shadowColor = 'rgba(160,190,255,0.95)';
+        ctx.shadowBlur = 40;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius + 2, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        drawLightParticles();
+        ctx.restore();
+    }
+
+    function drawLightParticles() {
+        const layers = [
+            {count: 13, baseRadius: radius + 18, speed: 0.0045, size: 1.4, hueBase: 215},
+            {count: 10, baseRadius: radius + 36, speed: -0.0065, size: 2.1, hueBase: 235},
+            {count: 6, baseRadius: radius + 58, speed: 0.0095, size: 3.0, hueBase: 260}
+        ];
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+
+        layers.forEach((layer, li) => {
+            for (let i = 0; i < layer.count; i++) {
+                const phase = i * (Math.PI * 2 / layer.count);
+                const t = time * 0.0009 + i * 0.11 + li * 0.28;
+                const angle = t * (1.0 + li * 0.1) + phase + Math.sin(t * (0.7 + li * 0.15)) * 0.45;
+                const radial = layer.baseRadius + Math.sin(t * (0.85 + li * 0.12) + i) * (6 + li * 3);
+
+                const useLissajous = (i % 2) === 0;
+                let x, y;
+                if (useLissajous) {
+                    const ax = Math.sin(angle * (1.05 + 0.06 * li) + i * 0.8);
+                    const ay = Math.sin(angle * (1.38 + 0.04 * li) + i * 1.1 + 0.5);
+                    x = ax * (radial * (0.72 + 0.3 * Math.sin(t * 0.58 + i)));
+                    y = ay * (radial * (0.52 + 0.4 * Math.cos(t * 0.62 + i)));
+                } else {
+                    const ex = 1.0 + 0.18 * Math.sin(t * 0.68 + i);
+                    const ey = 0.68 + 0.22 * Math.cos(t * 0.86 + i);
+                    x = Math.cos(angle) * radial * ex;
+                    y = Math.sin(angle) * radial * ey;
+                }
+
+                const jitter = (Math.sin(t * 2.2 + i) + Math.cos(t * 1.6 + i * 1.3)) * 0.8;
+                x += jitter * 0.6;
+                y += jitter * 0.6;
+
+                const size = layer.size + Math.abs(Math.sin(t * (0.95 + li * 0.04) + i)) * 0.9;
+                const alpha = 0.14 + Math.abs(Math.sin(t * (0.75 + li * 0.04) + i)) * 0.42;
+                const hue = layer.hueBase + Math.sin(t * (0.82 + li * 0.02) + i) * 18;
+
+                const distFromCenter = Math.sqrt(x * x + y * y);
+                const minAllowed = radius + 8;
+                const maxAllowed = radius + 92;
+                if (distFromCenter < minAllowed || distFromCenter > maxAllowed) continue;
+
+                ctx.save();
+                ctx.globalAlpha = Math.min(0.9, alpha);
+                ctx.fillStyle = `hsl(${hue}, 74%, ${56 - li * 4}%)`;
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        });
+
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.restore();
+    }
+
+    function animate() {
+        time += 3;
+        specialWavePhase += 0.08;
+        draw3DSphere();
+        requestAnimationFrame(animate);
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left - centerX;
+        const mouseY = e.clientY - rect.top - centerY;
+        const distance = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
+        const over = (distance < radius + 50);
+        canvas.style.cursor = over ? 'pointer' : 'default';
+    });
+
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left - centerX;
+        const mouseY = e.clientY - rect.top - centerY;
+        const distance = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
+        if (distance < radius + 50) {
+            // 클릭 시 폭발적인 요동 트리거
+            clickWobble.active = true;
+            clickWobble.x = mouseX;
+            clickWobble.y = mouseY;
+            clickWobble.startMs = Date.now();
+            setTimeout(() => { window.location.href = './page2.html'; }, clickWobble.durationMs);
+        }
+    });
+
+    animate();
+    </script>
+</body>
+</html>
