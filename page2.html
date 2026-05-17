@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Flowing Sphere</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background: radial-gradient(circle at 28% 18%, rgba(170,205,255,0.84), rgba(245,200,255,0.40) 36%, rgba(255,255,255,0.0) 72%),
+      linear-gradient(135deg, #dff4ff 0%, #e6dcff 45%, #ffffff 100%);
+      background-size: 180% 180%;
+      overflow: hidden;
+      animation: bgShift 11s linear infinite;
+    }
+    canvas { display: block; background: transparent; }
+    /* Right-side voice panel */
+    .side-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      height: 100vh;
+      width: 340px;
+      padding: 24px;
+      background: rgba(255, 255, 255, 0.82);
+      backdrop-filter: blur(10px);
+      box-shadow: -8px 0 24px rgba(0,0,0,0.08);
+      border-left: 1px solid rgba(180, 190, 255, 0.35);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      transition: transform 0.6s ease-in-out, opacity 0.6s ease-in-out;
+      z-index: 100; /* 캔버스 위에 표시되도록 */
+    }
+    .side-panel.hidden {
+      opacity: 0;
+      transform: translateX(100%);
+      pointer-events: none;
+    }
+    .side-panel h2 {
+      margin: 0 0 8px 0;
+      font-size: 22px;
+      color: #4154d8;
+      letter-spacing: 0.2px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .form-group label {
+      font-size: 12px;
+      color: #6b79b5;
+    }
+    .form-group input[type="text"] {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(120, 140, 220, 0.4);
+      outline: none;
+      background: rgba(255,255,255,0.9);
+      color: #2b2f4a;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.04) inset;
+    }
+    .form-group input[type="text"]::placeholder {
+      color: #9aa3d4;
+    }
+    .voice-button {
+      margin-top: 4px;
+      padding: 12px 14px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #6c7dff, #a67bff);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 8px 18px rgba(108, 125, 255, 0.28);
+      transition: transform 0.08s ease, box-shadow 0.12s ease;
+    }
+    .voice-button:active {
+      transform: translateY(1px);
+      box-shadow: 0 6px 14px rgba(108, 125, 255, 0.22);
+    }
+    @keyframes bgShift {
+      0% { background-position: 0% 0%; }
+      50% { background-position: 100% 100%; }
+      100% { background-position: 0% 0%; }
+    }
+  </style>
+</head>
+<body>
+<canvas id="sphereCanvas"></canvas>
+<div class="side-panel">
+  <h2>Make a Voice</h2>
+  <div class="form-group">
+    <label for="voiceStyle">Voice Style prompt</label>
+    <input id="voiceStyle" type="text" placeholder="e.g. calm, warm, documentary narrator" />
+  </div>
+  <button class="voice-button" id="generateVoiceBtn">Generate Voice</button>
+</div>
+<script>
+  const canvas = document.getElementById('sphereCanvas');
+  const ctx = canvas.getContext('2d');
+  const sidePanel = document.querySelector('.side-panel');
+
+  let initialCenterX, initialCenterY;
+  let currentCenterX, currentCenterY;
+  let currentRadius = 180;
+  let time = 0;
+  let animationFrameId;
+
+  let waveEffect = {
+    active: false,
+    startMs: 0,
+    durationMs: 3000,
+    amplitude: 20,
+    frequency: 8,
+    speed: 0.04,
+    decay: 1.2
+  };
+
+  function updateCanvasSize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    initialCenterX = window.innerWidth / 2;
+    initialCenterY = window.innerHeight / 2;
+    currentCenterX = initialCenterX;
+    currentCenterY = initialCenterY;
+  }
+
+  function hslToRgb(h, s, l) {
+    s /= 100; l /= 100;
+    const k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
+  }
+
+  function draw3DSphere(cx, cy, r) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const rInt = Math.floor(r);
+    if (rInt <= 0) return;
+
+    const maxRenderRadius = rInt + waveEffect.amplitude;
+    const imageData = ctx.createImageData(maxRenderRadius * 2, maxRenderRadius * 2);
+    const data = imageData.data;
+    const nowMs = Date.now();
+
+    let radiusModifier = 0;
+    let waveEnvelope = 0;
+    if (waveEffect.active) {
+      const t = (nowMs - waveEffect.startMs) / 1000.0;
+      const td = waveEffect.durationMs / 1000.0;
+      if (t <= td) {
+        waveEnvelope = Math.sin(Math.PI * (t / td));
+        waveEnvelope *= Math.exp(-waveEffect.decay * t);
+      } else {
+        waveEffect.active = false;
+      }
+    }
+
+    for (let y = -maxRenderRadius; y < maxRenderRadius; y++) {
+      for (let x = -maxRenderRadius; x < maxRenderRadius; x++) {
+        const distance = Math.sqrt(x * x + y * y);
+        const theta = Math.atan2(y, x);
+
+        let effectiveRadius = rInt;
+        if (waveEffect.active && waveEnvelope > 0) {
+          const wave1 = 3.5 * Math.sin(theta * waveEffect.frequency + time * waveEffect.speed);
+          const wave2 = 3.5 * Math.sin(theta * waveEffect.frequency * 2.1 + time * waveEffect.speed * 0.7);
+          const wave3 = 3.5 * Math.sin(theta * waveEffect.frequency * 0.8 + time * waveEffect.speed * 1.5);
+          radiusModifier = (wave1 * 0.5 + wave2 * 0.3 + wave3 * 0.2) * waveEffect.amplitude * waveEnvelope;
+          effectiveRadius = rInt + radiusModifier;
+        }
+
+        if (distance > effectiveRadius) continue;
+
+        const z0 = Math.sqrt(Math.max(0, rInt * rInt - x * x - y * y));
+        const phi = Math.acos(Math.min(1, Math.max(-1, z0 / rInt)));
+
+        const waveBase = Math.sin(theta * 2 + time * 0.02);
+        let combinedWave = waveBase * 0.5;
+
+        const hue = 230 + Math.sin(theta * 2 + time * 0.025) * 26 + Math.sin(phi * 3 - time * 0.03) * 14;
+        const saturation = 72 + (Math.sin(combinedWave * 1.3 + time * 0.025) * 18);
+        const lightnessBase = 38 + (z0 / rInt) * 18 + Math.sin(combinedWave * 2 - time * 0.02) * 6;
+        let [r_col, g_col, b_col] = hslToRgb(hue, saturation, lightnessBase);
+
+        const sx = 2, sy = 2;
+        const zx1 = Math.sqrt(Math.max(0, rInt*rInt - (x+sx)*(x+sx) - y*y));
+        const zx2 = Math.sqrt(Math.max(0, rInt*rInt - (x-sx)*(x-sx) - y*y));
+        const zy1 = Math.sqrt(Math.max(0, rInt*rInt - x*x - (y+sy)*(y+sy)));
+        const zy2 = Math.sqrt(Math.max(0, rInt*rInt - x*x - (y-sy)*(y-sy)));
+        const dzdx = (zx1 - zx2) / (2*sx);
+        const dzdy = (zy1 - zy2) / (2*sy);
+        const nx = -dzdx; const ny = -dzdy; const nz = 1.0;
+        const nLen = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1.0;
+        const normalX = nx / nLen; const normalY = ny / nLen; const normalZ = nz / nLen;
+        const lightX = Math.cos(time * 0.007); const lightY = Math.sin(time * 0.007); const lightZ = 0.6;
+        const dotProduct = normalX * lightX + normalY * lightY + normalZ * lightZ;
+        const lighting = Math.max(0.06, 0.5 + 0.9 * dotProduct);
+        r_col = Math.min(255, Math.floor(r_col * lighting + 8));
+        g_col = Math.min(255, Math.floor(g_col * lighting + 6));
+        b_col = Math.min(255, Math.floor(b_col * lighting + 10));
+
+        const pixelX = Math.floor(x + maxRenderRadius);
+        const pixelY = Math.floor(y + maxRenderRadius);
+        const pixelIndex = (pixelY * maxRenderRadius * 2 + pixelX) * 4;
+        data[pixelIndex] = r_col;
+        data[pixelIndex + 1] = g_col;
+        data[pixelIndex + 2] = b_col;
+        data[pixelIndex + 3] = 255;
+      }
+    }
+    ctx.putImageData(imageData, cx - maxRenderRadius, cy - maxRenderRadius);
+    drawAura(cx, cy, rInt);
+  }
+
+  function drawAura(cx, cy, r) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    const pulse = (Math.sin(time * 0.02) * 0.5 + 0.5);
+    const aura1 = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r + 50);
+    aura1.addColorStop(0, `rgba(150, 200, 255, ${0.34 + pulse * 0.12})`);
+    aura1.addColorStop(0.35, 'rgba(130, 170, 255, 0.20)');
+    aura1.addColorStop(0.7, 'rgba(110, 140, 255, 0.12)');
+    aura1.addColorStop(1, 'rgba(90, 120, 255, 0)');
+    ctx.fillStyle = aura1;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 50, 0, Math.PI * 2);
+    ctx.fill();
+    const aura2 = ctx.createRadialGradient(0, 0, r * 0.6, 0, 0, r + 95);
+    aura2.addColorStop(0, 'rgba(120, 160, 255, 0.18)');
+    aura2.addColorStop(0.4, 'rgba(100, 140, 255, 0.10)');
+    aura2.addColorStop(0.8, 'rgba(80, 110, 255, 0.06)');
+    aura2.addColorStop(1, 'rgba(60, 90, 255, 0)');
+    ctx.fillStyle = aura2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 95, 0, Math.PI * 2);
+    ctx.fill();
+    const aura3 = ctx.createRadialGradient(0, 0, r * 0.9, 0, 0, r + 140);
+    aura3.addColorStop(0, 'rgba(110, 150, 255, 0.10)');
+    aura3.addColorStop(0.5, 'rgba(90, 120, 255, 0.06)');
+    aura3.addColorStop(0.85, `rgba(255, 120, 200, ${0.03 + pulse * 0.015})`);
+    aura3.addColorStop(1, 'rgba(70, 90, 255, 0)');
+    ctx.fillStyle = aura3;
+    ctx.beginPath();
+    ctx.arc(0, 0, r + 140, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (!waveEffect.active || waveEffect.waveEnvelope <= 0) {
+      ctx.save();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = 'rgba(180,200,255,0.28)';
+      ctx.shadowColor = 'rgba(160,190,255,0.95)';
+      ctx.shadowBlur = 40;
+      ctx.beginPath();
+      ctx.arc(0, 0, r + 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    drawLightParticles(r);
+    ctx.restore();
+  }
+
+  function drawLightParticles(r) {
+    const layers = [
+      {count: 13, baseRadius: r + 18, speed: 0.0045, size: 1.4, hueBase: 215},
+      {count: 10, baseRadius: r + 36, speed: -0.0065, size: 2.1, hueBase: 235},
+      {count: 6, baseRadius: r + 58, speed: 0.0095, size: 3.0, hueBase: 260}
+    ];
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    layers.forEach((layer, li) => {
+      for (let i = 0; i < layer.count; i++) {
+        const phase = i * (Math.PI * 2 / layer.count);
+        const t = time * 0.0009 + i * 0.11 + li * 0.28;
+        const angle = t * (1.0 + li * 0.1) + phase + Math.sin(t * (0.7 + li * 0.15)) * 0.45;
+        const radial = layer.baseRadius + Math.sin(t * (0.85 + li * 0.12) + i) * (6 + li * 3);
+        const useLissajous = (i % 2) === 0;
+        let x, y;
+        if (useLissajous) {
+          const ax = Math.sin(angle * (1.05 + 0.06 * li) + i * 0.8);
+          const ay = Math.sin(angle * (1.38 + 0.04 * li) + i * 1.1 + 0.5);
+          x = ax * (radial * (0.72 + 0.3 * Math.sin(t * 0.58 + i)));
+          y = ay * (radial * (0.52 + 0.4 * Math.cos(t * 0.62 + i)));
+        } else {
+          const ex = 1.0 + 0.18 * Math.sin(t * 0.68 + i);
+          const ey = 0.68 + 0.22 * Math.cos(t * 0.86 + i);
+          x = Math.cos(angle) * radial * ex;
+          y = Math.sin(angle) * radial * ey;
+        }
+        const jitter = (Math.sin(t * 2.2 + i) + Math.cos(t * 1.6 + i * 1.3)) * 0.8;
+        x += jitter * 0.6;
+        y += jitter * 0.6;
+        const size = layer.size + Math.abs(Math.sin(t * (0.95 + li * 0.04) + i)) * 0.9;
+        const alpha = 0.14 + Math.abs(Math.sin(t * (0.75 + li * 0.04) + i)) * 0.42;
+        const hue = layer.hueBase + Math.sin(t * (0.82 + li * 0.02) + i) * 18;
+        const distFromCenter = Math.sqrt(x * x + y * y);
+        const minAllowed = r + 8;
+        const maxAllowed = r + 92;
+        if (distFromCenter < minAllowed || distFromCenter > maxAllowed) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.min(0.9, alpha);
+        ctx.fillStyle = `hsl(${hue}, 74%, ${56 - li * 4}%)`;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    });
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
+  function animateIdle() {
+    time += 3;
+    draw3DSphere(currentCenterX, currentCenterY, currentRadius);
+    animationFrameId = requestAnimationFrame(animateIdle);
+  }
+
+  const generateVoiceBtn = document.getElementById('generateVoiceBtn');
+
+  generateVoiceBtn.addEventListener('click', () => {
+    sidePanel.classList.add('hidden');
+    cancelAnimationFrame(animationFrameId);
+
+    waveEffect.active = true;
+    waveEffect.startMs = Date.now();
+
+    animateWaveTransition();
+  });
+
+  function animateWaveTransition() {
+    const waveDuration = waveEffect.durationMs;
+    let waveStartTime = null;
+
+    function waveLoop(timestamp) {
+      if (!waveStartTime) waveStartTime = timestamp;
+      const elapsed = timestamp - waveStartTime;
+
+      time += 3;
+      draw3DSphere(currentCenterX, currentCenterY, currentRadius);
+
+      if (elapsed < waveDuration) {
+        animationFrameId = requestAnimationFrame(waveLoop);
+      } else {
+        waveEffect.active = false;
+        animateToSide();
+      }
+    }
+    animationFrameId = requestAnimationFrame(waveLoop);
+  }
+
+  function animateToSide() {
+    const startX = currentCenterX;
+    const startY = currentCenterY;
+    const startRadius = currentRadius;
+    const panelWidth = sidePanel.offsetWidth;
+
+    // ✨ [수정] targetX와 targetY 값을 조정하여 최종 위치를 왼쪽 위로 변경
+    // 기존 targetX: (window.innerWidth - panelWidth) / 2 - (window.innerWidth / 2 - (window.innerWidth - panelWidth) / 2) + 20;
+    // 기존 targetY: window.innerHeight / 2;
+
+    const targetX = window.innerWidth * 0.12; // 화면 너비의 25% 지점으로 이동 (더 왼쪽으로)
+    const targetY = window.innerHeight * 0.25; // 화면 높이의 25% 지점으로 이동 (더 위로)
+    const targetRadius = 60;
+    const duration = 1800;
+    let startTime = null;
+
+    function move(timestamp) {
+      if (!startTime) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const ease = 0.5 * (1 - Math.cos(Math.PI * progress));
+      const angleProgress = Math.pow(ease, 0.6)
+      currentRadius = startRadius - (startRadius - targetRadius) * angleProgress;
+      const spiralAngle = (ease * Math.PI * 2) + (Math.PI / 2);
+      const spiralRadiusFactor = (1 - ease) * 1.5;
+      const spiralMagnitude = 180;
+      currentCenterX = startX - (startX - targetX) * ease + Math.cos(spiralAngle) * spiralMagnitude * spiralRadiusFactor;
+      currentCenterY = startY - (startY - targetY) * ease + Math.sin(spiralAngle) * spiralMagnitude * spiralRadiusFactor * 0.5;
+      time += 3;
+      draw3DSphere(currentCenterX, currentCenterY, currentRadius);
+
+      if (progress < 1) {
+        animationFrameId = requestAnimationFrame(move);
+      } else {
+        currentCenterX = targetX;
+        currentCenterY = targetY;
+        currentRadius = targetRadius;
+        animateSmallSphere();
+      }
+    }
+    animationFrameId = requestAnimationFrame(move);
+  }
+
+  function animateSmallSphere() {
+    time += 2;
+    draw3DSphere(currentCenterX, currentCenterY, currentRadius);
+    animationFrameId = requestAnimationFrame(animateSmallSphere);
+  }
+
+  updateCanvasSize();
+  animateIdle();
+  window.addEventListener('resize', () => {
+    updateCanvasSize();
+  });
+</script>
+</body>
+</html>
